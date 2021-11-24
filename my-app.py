@@ -1,4 +1,4 @@
-from os import link
+from ryu import ofproto
 from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller.handler import MAIN_DISPATCHER
@@ -10,6 +10,17 @@ from ryu.lib.packet import ethernet
 from ryu.lib.packet import ether_types
 from ryu.topology import event
 from ryu.topology.api import get_switch, get_link
+from math import inf
+
+
+class switch_port:
+    '''Simple class port
+    dpid: datapath id
+    port: port number'''
+
+    def __init__(self, dpid, port):
+        self.dpid = dpid
+        self.port = port
 
 
 class MySwitch(app_manager.RyuApp):
@@ -17,21 +28,19 @@ class MySwitch(app_manager.RyuApp):
 
     def __init__(self, *args, **kwargs):
         super(MySwitch, self).__init__(*args, **kwargs)
+
+        # dictionary {mac_address: class port}
         self.mac_to_port = {}
 
-    def add_flow(self, datapath, in_port, dst, src, actions):
-        ofproto = datapath.ofproto
+        # adictionary switch.dpid -> switch.datapatch
+        # use to install flow to switch
+        self.switches_list = {}
+        
+        # list of link {'src': src, 'dst': dst}
+        # use with dijkstra algorithm
+        self.links_list = []
 
-        match = datapath.ofproto_parser.OFPMatch(
-            in_port=in_port,
-            dl_dst=haddr_to_bin(dst), dl_src=haddr_to_bin(src))
-
-        mod = datapath.ofproto_parser.OFPFlowMod(
-            datapath=datapath, match=match, cookie=0,
-            command=ofproto.OFPFC_ADD, idle_timeout=0, hard_timeout=0,
-            priority=ofproto.OFP_DEFAULT_PRIORITY,
-            flags=ofproto.OFPFF_SEND_FLOW_REM, actions=actions)
-        datapath.send_msg(mod)
+    
         
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
@@ -47,47 +56,161 @@ class MySwitch(app_manager.RyuApp):
             return
         dst = eth.dst
         src = eth.src
-
-        # prevent error when look up
-        # can done better with try: except:
         dpid = datapath.id
-        self.mac_to_port.setdefault(dpid, {})
 
-        # add mac address to avoid FLOOD next time
-        self.mac_to_port[dpid][src] = msg.in_port
-
-        # if know des, just send.
-        # else FLOOD
-        if dst in self.mac_to_port[dpid]:
-            out_port = self.mac_to_port[dpid][dst]
-        else:
-            out_port = ofproto.OFPP_FLOOD
+        # add mac address to mac_to_port
+        self.add_mac_address(dpid, msg.in_port, src)
+        # get the shortest path
+        out_port, path = self.get_path(dpid, msg.in_port, dst)
         actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
 
-
-
-        # install a flow
+        # the path contains miltiple flow, add those to switch
         if out_port != ofproto.OFPP_FLOOD:
-            self.add_flow(datapath, msg.in_port, dst, src, actions)
+            self.install_flow(path, dst, src)
 
-        # if no buffer flag is on, re-send content
-        # else no need
-        if msg.buffer_id == ofproto.OFP_NO_BUFFER:
-            data = msg.data
-        else:
-            data = None
-        # send package out
+        # finish, send package out
+        if msg.buffer_id == ofproto.OFP_NO_BUFFER: data = msg.data
+        else: data = None
         out = datapath.ofproto_parser.OFPPacketOut(
             datapath=datapath, buffer_id=msg.buffer_id, in_port=msg.in_port,
             actions=actions, data=data)
         datapath.send_msg(out)
 
+
+
     @set_ev_cls(event.EventSwitchEnter)
     def _get_topology_data(self, ev):
-        switch_list = get_switch(self, None)
+        switches_list = get_switch(self, None)
         links_list = get_link(self, None)
-        switch_list = [switch.dp for switch in switch_list]
-        links_list = [{'src': {'dpid': link.src.dpid, 'port_no': link.src.port_no},
-                        'dst': {'dpid': link.dst.dpid, 'port_no': link.dst.port_no}} for link in links_list]
-        print(switch_list)
-        print(links_list)
+        
+        self.switches_list = {switch.dp.id: switch.dp for switch in switches_list}
+        self.links_list = [{'src': switch_port(link.src.dpid, link.src.port_no),
+                        'dst': switch_port(link.dst.dpid, link.dst.port_no)} for link in links_list]
+
+        print(self.switches_list)
+        print(self.links_list)
+
+
+
+    def add_mac_address(self, dpid, port, mac):
+
+        for link in self.links_list:
+            # if the port that connect to switch
+            # the mac-address is add to mac_to_port when it hit the first time
+            if link['dst'].dpid == dpid and link['dst'].port == port:
+                return
+        
+        # add mac address to mac_to_port
+        self.mac_to_port[mac] = switch_port(dpid, port)
+
+
+    def get_path(self, dpid, port, dst):
+        '''get the shorted path for package
+        return out_port, path'''
+        # if we know the dst, find the shortest path to it
+        # if we dont know the dst, return FLOOD, None
+        if dst in self.mac_to_port:
+            dst_port = self.mac_to_port[dst]
+            path = self.dijkstra(dpid, port, dst_port)
+
+            return path[-1]['out_port'], path
+        else:
+             return ofproto_v1_0.OFPP_FLOOD, None
+
+
+    def dijkstra(self, src_dpid, in_port, dst_port):
+        '''find the shorted path to destination
+        return list of link in inverse order with
+        format: [{'dpid': , 'in_port':, 'out_port':}]'''
+
+        open_node = {dpid: {'cost': inf if dpid != src_dpid else 0, 'pre': None}
+                for dpid in self.switches_list.keys()}
+        close_node = {}
+        
+        dst_dpid = dst_port.dpid
+        out_port = dst_port.port
+    
+        while open_node:
+            # find the node with the lowest cost
+            cur_dpid = None
+            for dpid in open_node:
+                if cur_dpid is None:
+                    cur_dpid = dpid
+                    cur_cost = open_node[dpid]['cost']
+                elif open_node[dpid]['cost'] < cur_cost:
+                    cur_dpid = dpid
+                    cur_cost = open_node[dpid]['cost']
+    
+            # all open node is unreachable
+            if cur_cost == inf: break
+    
+            # remove it from open_node and add it to close_node
+            close_node[cur_dpid] = open_node[cur_dpid]['pre']
+            del open_node[cur_dpid]
+    
+            # if the node is the dst node
+            if cur_dpid == dst_dpid: break 
+    
+            # because the graph have same weight for all link
+            # we can pe-compute cost of next node
+            cur_cost += 1
+            for link in self.links_list:
+                # if the link src is the cur_dpid and dst in open_node
+                # update the cost of dst node if the cost is lower
+                if link['src'].dpid == cur_dpid:
+                    try: 
+                        if open_node[link['dst'].dpid]['cost'] > cur_cost:
+                            open_node[link['dst'].dpid]['cost'] = cur_cost
+                            open_node[link['dst'].dpid]['pre'] = link
+                    except KeyError: pass
+    
+        # if the dst node is not in close_node
+        if dst_dpid not in close_node:
+            return None
+        # else return path
+        path = []
+        cur_dpid = dst_dpid
+        while True:
+            link = close_node[cur_dpid]
+            if link is None:
+                path.append({'dpid': cur_dpid, 'in_port': in_port , 'out_port': out_port})
+                return path
+            else:
+                path.append({'dpid': cur_dpid, 'in_port': link['dst'].port, 'out_port': out_port})
+                out_port = link['src'].port
+                cur_dpid = link['src'].dpid
+        
+
+    def install_flow(self, path, dst, src):
+        for low in path:
+            dpid = low['dpid']
+            in_port = low['in_port']
+            actions = [datapath.ofproto_parser.OFPActionOutput(low['out_port'])]
+            datapath = self.switches_list[dpid]
+            ofproto = datapath.ofproto
+
+            match = datapath.ofproto_parser.OFPMatch(
+            in_port=in_port,
+            dl_dst=haddr_to_bin(dst), dl_src=haddr_to_bin(src))
+
+            mod = datapath.ofproto_parser.OFPFlowMod(
+                datapath=datapath, match=match, cookie=0,
+                command=ofproto.OFPFC_ADD, idle_timeout=0, hard_timeout=0,
+                priority=ofproto.OFP_DEFAULT_PRIORITY,
+                flags=ofproto.OFPFF_SEND_FLOW_REM, actions=actions)
+            datapath.send_msg(mod)
+
+
+#    def add_flow(self, datapath, in_port, dst, src, actions):
+#        ofproto = datapath.ofproto
+#
+#        match = datapath.ofproto_parser.OFPMatch(
+#            in_port=in_port,
+#            dl_dst=haddr_to_bin(dst), dl_src=haddr_to_bin(src))
+#
+#        mod = datapath.ofproto_parser.OFPFlowMod(
+#            datapath=datapath, match=match, cookie=0,
+#            command=ofproto.OFPFC_ADD, idle_timeout=0, hard_timeout=0,
+#            priority=ofproto.OFP_DEFAULT_PRIORITY,
+#            flags=ofproto.OFPFF_SEND_FLOW_REM, actions=actions)
+#        datapath.send_msg(mod)
