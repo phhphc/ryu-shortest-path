@@ -1,3 +1,4 @@
+from os import link
 from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller.handler import MAIN_DISPATCHER
@@ -7,6 +8,8 @@ from ryu.lib.mac import haddr_to_bin
 from ryu.lib.packet import packet
 from ryu.lib.packet import ethernet
 from ryu.lib.packet import ether_types
+from ryu.topology import event
+from ryu.topology.api import get_switch, get_link
 
 
 class MySwitch(app_manager.RyuApp):
@@ -78,3 +81,13 @@ class MySwitch(app_manager.RyuApp):
             datapath=datapath, buffer_id=msg.buffer_id, in_port=msg.in_port,
             actions=actions, data=data)
         datapath.send_msg(out)
+
+    @set_ev_cls(event.EventSwitchEnter)
+    def _get_topology_data(self, ev):
+        switch_list = get_switch(self, None)
+        links_list = get_link(self, None)
+        switch_list = [switch.dp for switch in switch_list]
+        links_list = [{'src': {'dpid': link.src.dpid, 'port_no': link.src.port_no},
+                        'dst': {'dpid': link.dst.dpid, 'port_no': link.dst.port_no}} for link in links_list]
+        print(switch_list)
+        print(links_list)
