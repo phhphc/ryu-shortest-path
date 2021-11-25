@@ -110,5 +110,5 @@ class MySwitch:
 
 
 a = MySwitch()
-path = a.dijisktra(1, 3, switch_port(5, 3))
+path = a.dijisktra(1, 3, switch_port(1, 5))
 print(path)

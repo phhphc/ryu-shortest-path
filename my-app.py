@@ -1,4 +1,3 @@
-from ryu import ofproto
 from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller.handler import MAIN_DISPATCHER
@@ -17,7 +16,6 @@ class switch_port:
     '''Simple class port
     dpid: datapath id
     port: port number'''
-
     def __init__(self, dpid, port):
         self.dpid = dpid
         self.port = port
@@ -28,20 +26,16 @@ class MySwitch(app_manager.RyuApp):
 
     def __init__(self, *args, **kwargs):
         super(MySwitch, self).__init__(*args, **kwargs)
-
         # dictionary {mac_address: class port}
         self.mac_to_port = {}
-
         # adictionary switch.dpid -> switch.datapatch
         # use to install flow to switch
         self.switches_list = {}
-        
         # list of link {'src': src, 'dst': dst}
-        # use with dijkstra algorithm
+        # use for dijkstra algorithm
         self.links_list = []
 
     
-        
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
         msg = ev.msg
@@ -54,21 +48,23 @@ class MySwitch(app_manager.RyuApp):
         # ignore lldp packet
         if eth.ethertype == ether_types.ETH_TYPE_LLDP:
             return
+
         dst = eth.dst
         src = eth.src
         dpid = datapath.id
 
+        print('packet in:', dpid, msg.in_port, dst, src)
         # add mac address to mac_to_port
         self.add_mac_address(dpid, msg.in_port, src)
         # get the shortest path
         out_port, path = self.get_path(dpid, msg.in_port, dst)
-        actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
 
-        # the path contains miltiple flow, add those to switch
+        # the path contains miltiple flow, we want to install all of those
         if out_port != ofproto.OFPP_FLOOD:
             self.install_flow(path, dst, src)
 
         # finish, send package out
+        actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
         if msg.buffer_id == ofproto.OFP_NO_BUFFER: data = msg.data
         else: data = None
         out = datapath.ofproto_parser.OFPPacketOut(
@@ -79,30 +75,34 @@ class MySwitch(app_manager.RyuApp):
 
 
     @set_ev_cls(event.EventSwitchEnter)
-    def _get_topology_data(self, ev):
+    def _get_switches(self, ev):
         switches_list = get_switch(self, None)
-        links_list = get_link(self, None)
-        
         self.switches_list = {switch.dp.id: switch.dp for switch in switches_list}
+        print()
+        print(self.switches_list.keys())
+
+    @set_ev_cls(event.EventLinkAdd)
+    def _get_links(self, ev):
+        links_list = get_link(self, None)
         self.links_list = [{'src': switch_port(link.src.dpid, link.src.port_no),
                         'dst': switch_port(link.dst.dpid, link.dst.port_no)} for link in links_list]
-
-        print(self.switches_list)
-        print(self.links_list)
-
+        print()
+        for link in self.links_list:
+            print(link['src'].dpid, link['src'].port, '->', link['dst'].dpid, link['dst'].port)
 
 
     def add_mac_address(self, dpid, port, mac):
-
+        
         for link in self.links_list:
             # if the port that connect to switch
             # the mac-address is add to mac_to_port when it hit the first time
             if link['dst'].dpid == dpid and link['dst'].port == port:
                 return
-        
         # add mac address to mac_to_port
         self.mac_to_port[mac] = switch_port(dpid, port)
 
+        for mac in self.mac_to_port:
+            print('mac: ', mac, self.mac_to_port[mac].dpid, self.mac_to_port[mac].port)
 
     def get_path(self, dpid, port, dst):
         '''get the shorted path for package
@@ -111,8 +111,11 @@ class MySwitch(app_manager.RyuApp):
         # if we dont know the dst, return FLOOD, None
         if dst in self.mac_to_port:
             dst_port = self.mac_to_port[dst]
+            print('find path...', 'from', dpid, port, 'to', dst_port.dpid, dst_port.port)
             path = self.dijkstra(dpid, port, dst_port)
-
+            print('path: ', path)
+            if path is None:
+                return ofproto_v1_0.OFPP_FLOOD, None
             return path[-1]['out_port'], path
         else:
              return ofproto_v1_0.OFPP_FLOOD, None
@@ -182,11 +185,12 @@ class MySwitch(app_manager.RyuApp):
         
 
     def install_flow(self, path, dst, src):
+        print('install flow...')
         for low in path:
             dpid = low['dpid']
             in_port = low['in_port']
-            actions = [datapath.ofproto_parser.OFPActionOutput(low['out_port'])]
             datapath = self.switches_list[dpid]
+            actions = [datapath.ofproto_parser.OFPActionOutput(low['out_port'])]
             ofproto = datapath.ofproto
 
             match = datapath.ofproto_parser.OFPMatch(
@@ -199,18 +203,3 @@ class MySwitch(app_manager.RyuApp):
                 priority=ofproto.OFP_DEFAULT_PRIORITY,
                 flags=ofproto.OFPFF_SEND_FLOW_REM, actions=actions)
             datapath.send_msg(mod)
-
-
-#    def add_flow(self, datapath, in_port, dst, src, actions):
-#        ofproto = datapath.ofproto
-#
-#        match = datapath.ofproto_parser.OFPMatch(
-#            in_port=in_port,
-#            dl_dst=haddr_to_bin(dst), dl_src=haddr_to_bin(src))
-#
-#        mod = datapath.ofproto_parser.OFPFlowMod(
-#            datapath=datapath, match=match, cookie=0,
-#            command=ofproto.OFPFC_ADD, idle_timeout=0, hard_timeout=0,
-#            priority=ofproto.OFP_DEFAULT_PRIORITY,
-#            flags=ofproto.OFPFF_SEND_FLOW_REM, actions=actions)
-#        datapath.send_msg(mod)
