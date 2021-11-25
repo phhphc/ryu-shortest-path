@@ -161,11 +161,11 @@ class MySwitch(app_manager.RyuApp):
                 # if the link src is the cur_dpid and dst in open_node
                 # update the cost of dst node if the cost is lower
                 if link['src'].dpid == cur_dpid:
-                    try: 
-                        if open_node[link['dst'].dpid]['cost'] > cur_cost:
-                            open_node[link['dst'].dpid]['cost'] = cur_cost
-                            open_node[link['dst'].dpid]['pre'] = link
-                    except KeyError: pass
+                    tmp_dpid = link['dst'].dpid
+                    if tmp_dpid in open_node:
+                        if open_node[tmp_dpid]['cost'] > cur_cost:
+                            open_node[tmp_dpid]['cost'] = cur_cost
+                            open_node[tmp_dpid]['pre'] = link
     
         # if the dst node is not in close_node
         if dst_dpid not in close_node:
