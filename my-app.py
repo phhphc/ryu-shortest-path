@@ -34,6 +34,10 @@ class MySwitch(app_manager.RyuApp):
         # list of link {'src': src, 'dst': dst}
         # use for dijkstra algorithm
         self.links_list = []
+        # if we ceate a spanning tree from topology
+        # non_span_port is the port that is not in the spanning tree
+        # it is use as a black list when FLOOD package
+        self.non_span_port = {}
 
     
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
@@ -63,8 +67,14 @@ class MySwitch(app_manager.RyuApp):
         if out_port != ofproto.OFPP_FLOOD:
             self.install_flow(path, dst, src)
 
+        # to prevent package loop, we only FLOOD package that come from port not link to openflow switch
+        # or port link to openflow switch is but in the spanning tree
+        if out_port == ofproto.OFPP_FLOOD and msg.in_port in self.non_span_port[dpid]:
+                actions = []
+        else:
+            actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
+
         # finish, send package out
-        actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
         if msg.buffer_id == ofproto.OFP_NO_BUFFER: data = msg.data
         else: data = None
         out = datapath.ofproto_parser.OFPPacketOut(
@@ -86,9 +96,13 @@ class MySwitch(app_manager.RyuApp):
         links_list = get_link(self, None)
         self.links_list = [{'src': switch_port(link.src.dpid, link.src.port_no),
                         'dst': switch_port(link.dst.dpid, link.dst.port_no)} for link in links_list]
+
+        self.non_span_port = self.get_non_span_port()
+
         print()
         for link in self.links_list:
             print(link['src'].dpid, link['src'].port, '->', link['dst'].dpid, link['dst'].port)
+
 
 
     def add_mac_address(self, dpid, port, mac):
@@ -183,6 +197,36 @@ class MySwitch(app_manager.RyuApp):
                 out_port = link['src'].port
                 cur_dpid = link['src'].dpid
         
+
+    def get_non_span_port(self):
+        '''use spanning tree algorythm to create spanning tree. 
+        return: list of port that is not need to connect spanning_tree.
+        We may use this to prevent package loop in multiple link topology'''
+        previous_node = {dpid:None for dpid in self.switches_list}
+        #span_port is the port that is not connected by spanner link
+        non_span_port = {dpid:[] for dpid in self.switches_list}
+        for link in self.links_list:
+            non_span_port[link['src'].dpid].append(link['src'].port)
+
+        def root_node(dpid):
+            while previous_node[dpid] is not None:
+                dpid = previous_node[dpid]
+            return dpid
+
+        for link in self.links_list:
+            src, dst = link['src'], link['dst']
+
+            root_src = root_node(src.dpid)
+            root_dst = root_node(dst.dpid)
+
+            if root_src != root_dst:
+                previous_node[root_dst] = root_src
+                non_span_port[src.dpid].remove(src.port)
+                non_span_port[dst.dpid].remove(dst.port)
+
+        print('non_span_port: ', non_span_port)
+        return non_span_port
+
 
     def install_flow(self, path, dst, src):
         print('install flow...')
