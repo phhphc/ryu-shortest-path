@@ -24,9 +24,9 @@ class switch_port:
 class MySwitch(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_0.OFP_VERSION]
 
-    FLOW_HARD_TIMEOUT = 10
-    FLOW_IDLE_TIMEOUT = 9
-    MAC_CONNECT_SAVE_TIME = 13
+    FLOW_HARD_TIMEOUT = 7200
+    FLOW_IDLE_TIMEOUT = 1800
+    MAC_CONNECT_SAVE_TIME = 7250
 
     def __init__(self, *args, **kwargs):
         super(MySwitch, self).__init__(*args, **kwargs)
@@ -112,7 +112,6 @@ class MySwitch(app_manager.RyuApp):
 
 
     def add_mac_address(self, dpid, port, mac):
-        
         for link in self.links_list:
             # if the port that connect to switch
             # the mac-address is add to mac_to_port when it hit the first time
@@ -120,6 +119,7 @@ class MySwitch(app_manager.RyuApp):
                 return
         # add mac address to mac_to_port
         self.mac_to_port[mac] = switch_port(dpid, port)
+
 
     def get_path(self, dpid, port, dst):
         '''get the shorted path for package
@@ -175,6 +175,7 @@ class MySwitch(app_manager.RyuApp):
             # if the node is the dst node
             if cur_dpid in dst_dpid: 
                 dst_dpid.remove(cur_dpid)
+                # if all destination is found
                 if not dst_dpid: break 
 
             # because the graph have same weight for all link
@@ -272,11 +273,12 @@ class MySwitch(app_manager.RyuApp):
 
             src_port = self.mac_to_port[src]
             path_list = self.dijkstra(src_port.dpid, src_port.port, dst_port_list)
-            for path, dst in zip(path_list, self.mac_connection_list[src]):
+            #for path, dst in zip(path_list, self.mac_connection_list[src]):
+            for path, dst, port_dest in zip(path_list, self.mac_connection_list[src], dst_port_list):
                 
                 # print DEBUG
                 print('FindPath from switch', src_port.dpid, 'port', src_port.port, 'to switch', 
-                        path[0]['dpid'], 'port', path[0]['out_port'])
+                        port_dest.dpid, 'port', port_dest.port)
                 if path: 
                     for node in path: print('\tSwitch', node)
                 else: print('\tNo path')
