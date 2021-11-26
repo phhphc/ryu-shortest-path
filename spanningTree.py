@@ -53,6 +53,7 @@ class MySwitch:
         non_span_port = {dpid:[] for dpid in self.switches_list}
         for link in self.links_list:
             non_span_port[link['src'].dpid].append(link['src'].port)
+        print(non_span_port)
 
         def root_node(dpid):
             while previous_node[dpid] is not None:
@@ -68,12 +69,22 @@ class MySwitch:
             if root_src != root_dst:
                 previous_node[root_dst] = root_src
                 non_span_port[src.dpid].remove(src.port)
-                non_span_port[dst.dpid].remove(dst.port)
+                try:
+                    # link from dst to src may not be added
+                    non_span_port[dst.dpid].remove(dst.port)
+                except ValueError: pass
 
         return non_span_port
 
 
-
+'''
+1 []
+2 [2]
+3 [2, 3]
+4 []
+5 []
+6 [2]
+7 []'''
 
 a = MySwitch()
 span_port = a.get_non_span_port()
