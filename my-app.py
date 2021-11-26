@@ -65,7 +65,7 @@ class MySwitch(app_manager.RyuApp):
         src = eth.src
         dpid = datapath.id
 
-        print('Packet hit switch', dpid, 'port', msg.in_port, 'from', src, 'to' , dst)
+        print(f'Packet In switch  {dpid: >2} port {msg.in_port: >2} from {src} to  {dst}')
         # add mac address to mac_to_port
         self.add_mac_address(dpid, msg.in_port, src)
         # get the shortest path
@@ -111,11 +111,8 @@ class MySwitch(app_manager.RyuApp):
         for link in self.links_list:
             print('\t', 'dpid:', link['src'].dpid, 'port:', link['src'].port, 
                 '->', 'dpid:', link['dst'].dpid, 'port:', link['dst'].port)
-        try:
-            self.non_span_port = self.get_non_span_port()
-        # if the link is update when get_non_span_port, the list take error when remove value
-        # but after the update, get_non_span_port will be recall, so the list is ok
-        except ValueError: pass
+
+        self.non_span_port = self.get_non_span_port()
         self.update_flow()
 
 
@@ -244,7 +241,10 @@ class MySwitch(app_manager.RyuApp):
             if root_src != root_dst:
                 previous_node[root_dst] = root_src
                 non_span_port[src.dpid].remove(src.port)
-                non_span_port[dst.dpid].remove(dst.port)
+                try:
+                    # link from dst to src may not be add to link list
+                    non_span_port[dst.dpid].remove(dst.port)
+                except ValueError: pass
 
         return non_span_port
 
