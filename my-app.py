@@ -65,7 +65,8 @@ class MySwitch(app_manager.RyuApp):
         src = eth.src
         dpid = datapath.id
 
-        print(f'Packet In switch  {dpid: >2} port {msg.in_port: >2} from {src} to  {dst}')
+        # print DEBUG
+        print(f'PacketIn switch  {dpid: >2} port {msg.in_port: >2} from {src} to  {dst}')
         # add mac address to mac_to_port
         self.add_mac_address(dpid, msg.in_port, src)
         # get the shortest path
@@ -98,7 +99,6 @@ class MySwitch(app_manager.RyuApp):
     def _get_switches(self, ev):
         switches_list = get_switch(self, None)
         self.switches_list = {switch.dp.id: switch.dp for switch in switches_list}
-        print('Update Switch-->', list(self.switches_list.keys()))
 
     @set_ev_cls(event.EventLinkAdd)
     @set_ev_cls(event.EventLinkDelete)
@@ -106,11 +106,6 @@ class MySwitch(app_manager.RyuApp):
         links_list = get_link(self, None)
         self.links_list = [{'src': switch_port(link.src.dpid, link.src.port_no),
                         'dst': switch_port(link.dst.dpid, link.dst.port_no)} for link in links_list]
-
-        print('Update Link-->')
-        for link in self.links_list:
-            print('\t', 'dpid:', link['src'].dpid, 'port:', link['src'].port, 
-                '->', 'dpid:', link['dst'].dpid, 'port:', link['dst'].port)
 
         self.non_span_port = self.get_non_span_port()
         self.update_flow()
@@ -126,20 +121,21 @@ class MySwitch(app_manager.RyuApp):
         # add mac address to mac_to_port
         self.mac_to_port[mac] = switch_port(dpid, port)
 
-        print('Known MAC-->')
-        for mac in self.mac_to_port:
-            print('\tmac: ', mac, 'at dpid:', self.mac_to_port[mac].dpid, 'port:', self.mac_to_port[mac].port)
-
-
     def get_path(self, dpid, port, dst):
         '''get the shorted path for package
         return out_port, path'''
         # if we know the dst, find the shortest path to it
         if dst in self.mac_to_port:
             dst_port = self.mac_to_port[dst]
-            print('Find Path --> dpid:', dpid, 'port:', port, '-> dpid:', dst_port.dpid, 'port:', dst_port.port)
             path = self.dijkstra(dpid, port, [dst_port])
-            print('\tpath: ', path)
+            
+            # print DEBUG
+            print('FindPath from switch', dpid, 'port', port, 'to switch', dst_port.dpid, 'port', dst_port.port)
+            if path[0]: 
+                for node in path[0]:
+                    print('\tSwitch', node)
+            else: print('\tNo path')
+
             # if there is no path, flood port
             if path[0] is None:
                 return ofproto_v1_0.OFPP_FLOOD, None
@@ -258,7 +254,6 @@ class MySwitch(app_manager.RyuApp):
 
     def update_flow(self):
         '''update flow of all mac_connection'''
-        print('Update Flow -->')
         time_now = int(time.time())
         for src in self.mac_connection_list:
             dst_port_list = []
@@ -275,15 +270,19 @@ class MySwitch(app_manager.RyuApp):
             for dst in dst_to_del:
                 del self.mac_connection_list[src][dst]
 
-            print('\t', src, '->', dst_port_list)
             src_port = self.mac_to_port[src]
             path_list = self.dijkstra(src_port.dpid, src_port.port, dst_port_list)
-            print('\tpath_list: ', path_list)
             for path, dst in zip(path_list, self.mac_connection_list[src]):
-                if path:
-                    print('\tinstall', path, '->', dst, src)
-                    self.install_flow(path, dst, src)
+                
+                # print DEBUG
+                print('FindPath from switch', src_port.dpid, 'port', src_port.port, 'to switch', 
+                        path[0]['dpid'], 'port', path[0]['out_port'])
+                if path: 
+                    for node in path: print('\tSwitch', node)
+                else: print('\tNo path')
 
+                if path:
+                    self.install_flow(path, dst, src)
 
 
     def install_flow(self, path, dst, src):
