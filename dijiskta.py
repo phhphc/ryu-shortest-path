@@ -28,8 +28,8 @@ class MySwitch:
        self.links_list = [
             {'src': switch_port(1, 2), 'dst': switch_port(3, 1)},
             {'src': switch_port(1, 1), 'dst': switch_port(2, 1)},
-            #{'src': switch_port(3, 1), 'dst': switch_port(1, 2)},
-            #{'src': switch_port(2, 1), 'dst': switch_port(1, 1)},
+            {'src': switch_port(3, 1), 'dst': switch_port(1, 2)},
+            {'src': switch_port(2, 1), 'dst': switch_port(1, 1)},
             {'src': switch_port(2, 3), 'dst': switch_port(4, 1)},
             {'src': switch_port(6, 1), 'dst': switch_port(5, 1)},
             {'src': switch_port(2, 4), 'dst': switch_port(5, 2)},
@@ -44,14 +44,13 @@ class MySwitch:
             {'src': switch_port(5, 1), 'dst': switch_port(6, 1)}
        ]
 
-    def dijisktra(self, src_dpid, in_port, dst_port):
+    def dijkstra(self, src_dpid, in_port, dst_port_list):
 
         open_node = {dpid: {'cost': inf if dpid != src_dpid else 0, 'pre': None}
             for dpid in self.switches_list.keys()}
         close_node = {}
 
-        dst_dpid = dst_port.dpid
-        out_port = dst_port.port
+        dst_dpid = [dst_port.dpid for dst_port in dst_port_list]
 
         while open_node:
 
@@ -73,7 +72,9 @@ class MySwitch:
             del open_node[cur_dpid]
 
             # if the node is the dst node
-            if cur_dpid == dst_dpid: break 
+            if cur_dpid in dst_dpid: 
+                dst_dpid.remove(cur_dpid)
+                if not dst_dpid: break 
 
             # because the graph have same weight for all link
             # we can pe-compute cost of next node
@@ -88,27 +89,32 @@ class MySwitch:
                             open_node[link['dst'].dpid]['pre'] = link
                     except KeyError: pass
 
-        # if the dst node is not in close_node
-        if dst_dpid not in close_node:
-            return None
-        # else return path
-        path = []
-        cur_dpid = dst_dpid
-        while True:
-            link = close_node[cur_dpid]
-            if link is None:
-                path.append({'dpid': cur_dpid, 'in_port': in_port , 'out_port': out_port})
-                return path
-            else:
-                path.append({'dpid': cur_dpid, 'in_port': link['dst'].port, 'out_port': out_port})
-                out_port = link['src'].port
-                cur_dpid = link['src'].dpid
-     
+        path_list = []
+        for dst in dst_port_list:
+            # if the dst node is not in close_node
+            if dst.dpid not in close_node:
+                path_list.append(None)
+                continue
+            # else return path
+            path = []
+            cur_dpid = dst.dpid
+            out_port = dst.port
+            while True:
+                link = close_node[cur_dpid]
+                if link is None:
+                    path.append({'dpid': cur_dpid, 'in_port': in_port , 'out_port': out_port})
+                    path_list.append(path)
+                    break
+                else:
+                    path.append({'dpid': cur_dpid, 'in_port': link['dst'].port, 'out_port': out_port})
+                    out_port = link['src'].port
+                    cur_dpid = link['src'].dpid
+        return path_list
      
 
 
 
 
 a = MySwitch()
-path = a.dijisktra(1, 3, switch_port(1, 5))
+path = a.dijisktra(1, 3, [switch_port(5, 5), switch_port(6, 5)])
 print(path)
